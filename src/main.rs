@@ -33,10 +33,22 @@ use egui_aesthetix::{
 
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone)]
+pub struct BackroundThread {
+    pub tic : Arc<Mutex<String>>,
+}
 
+impl BackroundThread {
+    fn new() -> Self {
+        let tic = Arc::new(Mutex::new(String::new()));
+        Self { tic }
+    }
+}
 
 
 pub struct MyApp {
+    pub tic_message : Arc<Mutex<String>>,  // make a placeholder for the tic message
+    pub tic_message_prev : String,         // make a placeholder for the previous tic message
     pub selected_index: usize,
     pub selected_index_prev: usize,
     pub serial_port: Option<Arc<Mutex<Box<dyn serialport::SerialPort>>>>,
@@ -57,7 +69,7 @@ pub struct MyApp {
 impl MyApp { 
 
     #[must_use]
-    pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(creation_context: &eframe::CreationContext<'_>, some_thread : BackroundThread) -> Self {
 
         let themes: Vec<Rc<dyn Aesthetix>> = vec![
             Rc::new(TokyoNightStorm),
@@ -87,7 +99,13 @@ impl MyApp {
         let yy : Arc<Mutex<String>> = Arc::new(Mutex::new(initial_display.message.clone()));
         let zz = yy.clone();
 
+
+
+
+
         Self {
+            tic_message : some_thread.tic.clone(),     // clone here to get the value of the tic
+            tic_message_prev : String::new(),          // initialize the previous tic message
             selected_index: 0,
             selected_index_prev: 0,
             serial_port: None,
@@ -308,9 +326,7 @@ impl eframe::App for MyApp {
                                             serialport::SerialPortType::BluetoothPort => todo!(),
                                             serialport::SerialPortType::Unknown => todo!(),
                                         }
-                                
-
-
+                            
                                     //*self.scroller_text.lock().unwrap() += &format!("{}\n", item.port_name);
                                 }
                             }
@@ -329,53 +345,11 @@ impl eframe::App for MyApp {
 
                         }
 
-
-                        // let serial_port_list = serialport::available_ports().unwrap();
-
-                        // let serial_port_choice = egui::ComboBox::from_label("Serial port")
-                        //     .selected_text(serial_port_list[self.selected_index].port_name.clone());
-
-                        // serial_port_choice.show_index(
-                        //     ui,
-                        //     &mut self.selected_index,
-                        //     serial_port_list.len(),
-                        //     |i| serial_port_list[i].port_name.clone(),
-                        // );
-
-                        // let selected_port_name = serial_port_list[self.selected_index].port_name.clone();
-                        // let selected_port_name_prev = serial_port_list[self.selected_index_prev].port_name.clone();
-                        
-                        // // Print the new selected port name to the logger text buffer if it is different from the previous selection
-                        // if selected_port_name != selected_port_name_prev
-                        // {
-                        //     {
-                        //         let mut data = self.scroller_text.lock().unwrap();
-                        //         data.push_str(&format!("\nSelected Serial Port : {}\n", selected_port_name));
-                        //     }
-                        //     self.selected_index_prev = self.selected_index;
-
-                        //     // Parse the selected port name to determine if is of type /dev/ttyUSB or /dev/ttyACM
-                        //     // and if so, set the default baud rate to 115200*4 = 460800
-
-                        //     if selected_port_name.contains("ttyUSB") || selected_port_name.contains("ttyACM") {
-                        //         let default_baud_rate = 460800;
-                        //         if let Err(err) = self.open_port(&selected_port_name, default_baud_rate) {
-                        //             ui.colored_label(egui::Color32::RED, egui::RichText::new(err));
-                        //             return;
-                        //         }
-                        //         self.start_reading();
-                        //     }
-                        //     else {
-                        //         let default_baud_rate = 9600;
-                        //         if let Err(err) = self.open_port(&selected_port_name, default_baud_rate) {
-                        //             ui.colored_label(egui::Color32::RED, egui::RichText::new(err));
-                        //             return;
-                        //         }
-                        //         self.start_reading();
-                        //     }
-
-                        // }
-                        
+                        // determine whether to print a tic message
+                        if self.tic_message.lock().unwrap().clone() != self.tic_message_prev {
+                            *self.scroller_text.lock().unwrap() += &format!("\n\n{}\n", self.tic_message.lock().unwrap());
+                            self.tic_message_prev = self.tic_message.lock().unwrap().clone();
+                        }
 
                     }); // end horizontal
 
@@ -383,9 +357,6 @@ impl eframe::App for MyApp {
                     // ============================================================
                     // ** TERMINAL::TEXT_EDIT **
                     // ============================================================
-
-
-
                     let mut _scroller =
                         egui::ScrollArea::vertical()
                             .id_source("scrollerx")
@@ -494,18 +465,9 @@ impl eframe::App for MyApp {
                                 self.cursor_update = false;
                             }
 
-
-                                
-                                
-
                             }); // end scroll area
                             
-
-
                 }); // end vertical
-
-            
-
         });
         
 
@@ -519,10 +481,24 @@ impl eframe::App for MyApp {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> Result<(), eframe::Error> {
+    use chrono::format;
+
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
+    let background_thread = BackroundThread::new();
 
-
+    let background_thread_tokio = background_thread.clone();
+    let mut local_tic : u32 = 0;
+    // Start a background thread that updates the `tic` every second:
+    tokio::task::spawn(async move {
+        loop {
+            
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let mut tokio_tic = background_thread_tokio.tic.lock().unwrap();
+            *tokio_tic = format!("Tic = {}", local_tic);
+            local_tic += 1;
+        }
+    });
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([
@@ -535,37 +511,13 @@ async fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         parameters::gui::WINDOW_TITLE,
         options,
-        //egui_extras::install_image_loaders(&cc.egui_ctx), 
-        // Box::new(move |cc| Box::new({
-        //     // This gives us image support:
-        //     egui_extras::install_image_loaders(&cc.egui_ctx);
-        //     MyApp::new(cc) 
-        // })),
-        Box::new(move |cc| Ok(Box::new({
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            MyApp::new(cc)}))),
-    )
-}
-// #[cfg(target_arch = "wasm32")]
-// fn main() {
-//     // Redirect `log` message to `console.log` and friends:
-//     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
-//     let web_options = eframe::WebOptions::default();
+                Box::new(move |cc| {
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
+                    Ok(Box::new(MyApp::new(cc, background_thread.clone())))
+                }),
+            )
+        }
+    
 
-//     wasm_bindgen_futures::spawn_local(async {
-//         eframe::WebRunner::new()
-//             .start(
-//                 "the_canvas_id", // hardcode it
-//                 web_options,
-//                 Box::new(|cc| Box::new({
-//                     egui_extras::install_image_loaders(&cc.egui_ctx);
-//                     MyApp::new(cc)
-//                     })
-//                 ),
-                
-//             )
-//             .await
-//             .expect("failed to start eframe");
-//     });
-// }
+
