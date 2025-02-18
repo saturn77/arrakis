@@ -29,7 +29,7 @@ pub fn settings_tab_ui(
     egui::ScrollArea::new([false, true])
         .id_source("settings_component")
         .show(ui_root, |ui_scroll_area| {
-            ui_scroll_area.add_space(20.0);
+            ui_scroll_area.add_space(0.0);
 
             ui_scroll_area.with_layout(
                 egui::Layout::top_down_justified(egui::Align::Center),
@@ -41,7 +41,7 @@ pub fn settings_tab_ui(
 
 
                             egui::ComboBox::from_id_source("settings_theme_combo_box")
-                                .width(200.0)
+                                .width(150.0)
                                 .selected_text(state.active_theme.name())
                                 .show_ui(ui_grid, |ui_combobox| {
                                     for theme in themes {
@@ -58,6 +58,9 @@ pub fn settings_tab_ui(
                                         }
                                     }
                                 });
+
+
+                            
 
 
                         });

@@ -1,3 +1,11 @@
+use eframe::egui;
+use egui::Id;
+use std::io::{BufReader, BufRead};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::task;
+use std::rc::Rc;
+
 mod components;
 mod models;
 mod state; 
@@ -13,22 +21,27 @@ pub use models::details::Details;
 pub use models::initial::Banner; 
 
 
-use std::sync::{Arc, Mutex};
+
 use egui_aesthetix::{
     themes::{
         CarlDark, NordDark, NordLight, StandardDark, StandardLight, TokyoNight, TokyoNightStorm,
     },
     Aesthetix,
 };
-use eframe::egui; 
 
-use std::rc::Rc;
+
+
 use std::collections::BTreeMap;
 
 
 
 
 pub struct MyApp {
+    pub selected_index: usize,
+    pub selected_index_prev: usize,
+    pub serial_port: Option<Arc<Mutex<Box<dyn serialport::SerialPort>>>>,
+    pub serial_port_found: bool,
+    pub serial_port_name: String,
     pub logger_text: Logger,
     // wrap the scroller_text in an Arc to allow for multiple references
     pub scroller_text: Arc<Mutex<String>>,
@@ -75,6 +88,11 @@ impl MyApp {
         let zz = yy.clone();
 
         Self {
+            selected_index: 0,
+            selected_index_prev: 0,
+            serial_port: None,
+            serial_port_found: false,
+            serial_port_name: String::new(),
             logger_text: Logger::default(),
             scroller_text: zz,
             buffer_text : Arc::new(Mutex::new(String::new())),
@@ -94,7 +112,53 @@ impl MyApp {
     }
 
 
+    fn open_port(&mut self, port_name: &str, baud_rate: u32) -> Result<(), String> {
+        let serial_port_builder = serialport::new(port_name, baud_rate);
+        match serial_port_builder.open() {
+            Ok(serial_port) => {
+                self.serial_port = Some(Arc::new(Mutex::new(serial_port)));
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to open serial port: {}", e)),
+        }
+    }
 
+    /// Start reading from the serial port, if it is open, and one may want to do this to
+    /// display data in the UI text terminal. Of course, having this automatically start
+    /// when the application is started can be a reasonable default behavior for the user.
+    fn start_reading(&self) {
+        if let Some(serial_port) = &self.serial_port {
+            let serial_port_clone = Arc::clone(serial_port);
+            let text_buffer_clone = Arc::clone(&self.scroller_text);
+
+            task::spawn(async move {
+                let binding = serial_port_clone.lock().unwrap().as_mut().try_clone().unwrap();
+                let mut reader = BufReader::new(binding);
+                loop {
+                    let mut buffer = String::new();
+                    match reader.read_line(&mut buffer) {
+                        Ok(_) => {
+                            let mut data = text_buffer_clone.lock().unwrap();
+                            data.push_str(&buffer);
+                        }
+                        Err(e) => {
+                            eprintln!("Error reading from serial port: {:?}", e);
+                            break;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            });
+        }
+    }
+
+    /// Stop reading from the serial port, if it is open, and one may want to do this to 
+    /// avoid continuous data being displayed in the UI text terminal.
+    fn _stop_reading(&self) {
+        if let Some(serial_port) = &self.serial_port {
+            drop(serial_port.lock().unwrap());
+        }
+    }
 
 }
 
@@ -208,37 +272,109 @@ impl eframe::App for MyApp {
                         {
                             *self.scroller_text.lock().unwrap() = self.logger_text.system_info();
                         }
-                        if ui
-                            .button(egui::RichText::new("FPGA Version").color(egui::Color32::GREEN))
-                            .clicked()
-                        {
-                            *self.scroller_text.lock().unwrap() = self.logger_text.get_fpga_version();
-                            // subprocess command to get the exa tree output
-                            let output = std::process::Command::new("exa")
-                                .arg("--tree")
-                                .arg("--level=3")
-                                .output()
-                                .expect("failed to execute process");
-                            *self.scroller_text.lock().unwrap() = String::from_utf8_lossy(&output.stdout).into();
+
+                        let serial_port_button_widget = ui.button(egui::RichText::new("Find Serial Port")
+                        .color(egui::Color32::GREEN))
+                        .on_hover_text("Find a valid serial port");
+
+                        if serial_port_button_widget.clicked() {
+      
+                                self.serial_port_found = false;
+                                let serial_port_list = serialport::available_ports().unwrap();
+                                for item in serial_port_list.iter() {
+                                    // Determine if the serial port is a "ttyUSB" or "ttyACM" port
+                                    // and if so, print it, otherwise ignore it
+
+                                    if item.port_name.contains("ttyUSB") || item.port_name.contains("ttyACM") {
+                                        *self.scroller_text.lock().unwrap() += &format!("\n\nFound a valid Serial Port:\n");
+                                        *self.scroller_text.lock().unwrap() += &format!("{}\n", item.port_name);
+                                        // use SerialPortType to determine the manufacter and product
+
+                                        match &item.port_type {
+                                            serialport::SerialPortType::UsbPort(usb_info) => {
+                                                *self.scroller_text.lock().unwrap() += &format!("Manufacturer  = {}\n", usb_info.manufacturer.clone().unwrap());
+                                                *self.scroller_text.lock().unwrap() += &format!("Product       = {}\n", usb_info.product.clone().unwrap());
+                                                *self.scroller_text.lock().unwrap() += &format!("Serial Number = {}\n", usb_info.serial_number.clone().unwrap());
+                                                *self.scroller_text.lock().unwrap() += &format!("Vendor ID     = {}\n", usb_info.vid.clone());
+                                                *self.scroller_text.lock().unwrap() += &format!("Product ID    = {}\n", usb_info.pid.clone());
+                                                // determine if the manufacturer is "Digilent" and if so, print that it is AMD-Xilinx Digilent end point
+                                                if usb_info.manufacturer.clone().unwrap() == "Digilent" {
+                                                    *self.scroller_text.lock().unwrap() += &format!("\n** This port is an AMD-Xilinx Digilent end point\n");
+                                                    self.serial_port_found = true;
+                                                    self.serial_port_name  = item.port_name.clone();
+                                                }
+                                            },
+                                            serialport::SerialPortType::PciPort => todo!(),
+                                            serialport::SerialPortType::BluetoothPort => todo!(),
+                                            serialport::SerialPortType::Unknown => todo!(),
+                                        }
+                                
+
+
+                                    //*self.scroller_text.lock().unwrap() += &format!("{}\n", item.port_name);
+                                }
+                            }
+                        }
+
+                        if self.serial_port_found {
+                            // now read from the serial port, and put the data into the scroller_text
+                            // if the serial port is found
+                            let default_baud_rate = 460800;
+                            let serial_port_name = self.serial_port_name.clone();
+                            if let Err(err) = self.open_port(&serial_port_name, default_baud_rate) {
+                                ui.colored_label(egui::Color32::RED, egui::RichText::new(err));
+                                return;
+                            }
+                            self.start_reading();
+
                         }
 
 
+                        // let serial_port_list = serialport::available_ports().unwrap();
 
+                        // let serial_port_choice = egui::ComboBox::from_label("Serial port")
+                        //     .selected_text(serial_port_list[self.selected_index].port_name.clone());
 
-                        if ui
-                        .button(egui::RichText::new("Get Serial").color(egui::Color32::GREEN))
-                        .clicked(){
-                                    // create a csv reader object
-                                // let source_path_buffer = std::path::PathBuf::from("/home/james/raid_one/software_projects/atlantix/Egui/test_image/src/models/fpga.csv");
-                                // let source_file_handle = std::fs::File::open(source_path_buffer.clone()).unwrap();
-                                // let mut reader_obj = csv::Reader::from_reader(source_file_handle);
-                
-                                // // create a CsvFile object, get the headers and print them to the console
-                                // let mut csv_file = CsvFile::new();
-                                // csv_file.get_headers(&mut reader_obj).unwrap();
-                                // csv_file.get_column_vectors(&mut reader_obj).unwrap();
-                                // *self.scroller_text.lock().unwrap() = csv_file.format_headers_with_column_count();  
-                            }
+                        // serial_port_choice.show_index(
+                        //     ui,
+                        //     &mut self.selected_index,
+                        //     serial_port_list.len(),
+                        //     |i| serial_port_list[i].port_name.clone(),
+                        // );
+
+                        // let selected_port_name = serial_port_list[self.selected_index].port_name.clone();
+                        // let selected_port_name_prev = serial_port_list[self.selected_index_prev].port_name.clone();
+                        
+                        // // Print the new selected port name to the logger text buffer if it is different from the previous selection
+                        // if selected_port_name != selected_port_name_prev
+                        // {
+                        //     {
+                        //         let mut data = self.scroller_text.lock().unwrap();
+                        //         data.push_str(&format!("\nSelected Serial Port : {}\n", selected_port_name));
+                        //     }
+                        //     self.selected_index_prev = self.selected_index;
+
+                        //     // Parse the selected port name to determine if is of type /dev/ttyUSB or /dev/ttyACM
+                        //     // and if so, set the default baud rate to 115200*4 = 460800
+
+                        //     if selected_port_name.contains("ttyUSB") || selected_port_name.contains("ttyACM") {
+                        //         let default_baud_rate = 460800;
+                        //         if let Err(err) = self.open_port(&selected_port_name, default_baud_rate) {
+                        //             ui.colored_label(egui::Color32::RED, egui::RichText::new(err));
+                        //             return;
+                        //         }
+                        //         self.start_reading();
+                        //     }
+                        //     else {
+                        //         let default_baud_rate = 9600;
+                        //         if let Err(err) = self.open_port(&selected_port_name, default_baud_rate) {
+                        //             ui.colored_label(egui::Color32::RED, egui::RichText::new(err));
+                        //             return;
+                        //         }
+                        //         self.start_reading();
+                        //     }
+
+                        // }
                         
 
                     }); // end horizontal
@@ -381,7 +517,8 @@ impl eframe::App for MyApp {
 // mod app
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> Result<(), eframe::Error> {
+#[tokio::main]
+async fn main() -> Result<(), eframe::Error> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
 

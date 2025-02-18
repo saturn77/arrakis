@@ -1,7 +1,7 @@
 [package]
-name = "images"
+name = "arrakis"
 version = "0.1.0"
-authors = ["Jan Procházka <github.com/jprochazk>"]
+authors = ["James Bon <atlantix-eda@proton.me>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
 rust-version = "1.83"
@@ -29,7 +29,8 @@ egui-file-dialog = "0.6.1"
 chrono = {version = "0.4.38"}
 regex = "1.10.4"
 logos = "0.14.0"
-serialport = "4.6.1"
+serialport = {version="4.6.1", features=["libudev", "usbportinfo-interface"]}
+tokio = {version="1.42.0", features = ["full"]}
 #clap = "4.5.4"
 
 

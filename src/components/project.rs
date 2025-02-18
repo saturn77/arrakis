@@ -62,7 +62,9 @@ pub fn project_tab_ui(
                                 .size(TEXT_SIZE)
                                 .monospace(),
                         ));
-                        ui_grid.add(egui::TextEdit::singleline(&mut project.project_name));
+                        ui_grid.add(egui::TextEdit::singleline(&mut project.project_name)
+                        .hint_text("Set name of Logging Project i.e. RealData_01Jan2026.csv")
+                        .desired_width(TEXT_EDIT_WIDTH));
                         ui_grid.end_row();
 
                         ui_grid.add(egui::Label::new(
