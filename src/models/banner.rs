@@ -1,5 +1,5 @@
 
-use super::super::*;
+use crate::app::parameters; 
 
 #[derive(Default, Debug)]
 pub struct Banner {
@@ -14,7 +14,7 @@ impl Banner {
     }
 
     pub fn format(&mut self) {
-        self.message = format!("\n**** Welcome to Vescript FPGA Manager, Version {}", parameters::gui::VERSION); 
+        self.message = format!("\n**** Welcome to Arrakis Serial Runtime, Version {}", parameters::gui::VERSION); 
         self.message += &format!("\n**** Today is {}\n", chrono::Utc::now().format("%m-%d-%Y %H:%M:%S"));
         
     }

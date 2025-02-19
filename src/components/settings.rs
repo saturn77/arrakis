@@ -1,10 +1,9 @@
 //! Settings Tab
 
-use crate::state::ApplicationState;
 use eframe::egui;
 use egui_aesthetix::Aesthetix;
 use std::rc::Rc;
-
+use crate::app::state::ApplicationState; 
 
 #[allow(dead_code)]
 struct SettingsTab {
